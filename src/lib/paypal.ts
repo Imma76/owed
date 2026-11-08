@@ -103,7 +103,10 @@ export type Invoice = {
   items?: { name: string; quantity: string; unit_amount: Money }[];
   amount?: { currency_code: string; value: string };
   due_amount?: Money;
-  payments?: { paid_amount?: Money };
+  payments?: {
+    paid_amount?: Money;
+    transactions?: { payment_date?: string; amount?: Money; method?: string }[];
+  };
 };
 
 export type NewInvoice = {
@@ -184,6 +187,21 @@ export async function listInvoices(page = 1, pageSize = 50) {
   return pp<{ items?: Invoice[]; total_items?: number }>(
     "GET",
     `/v2/invoicing/invoices?page=${page}&page_size=${pageSize}&total_required=true`,
+  );
+}
+
+export async function searchInvoices(filter: {
+  recipientEmail?: string;
+  status?: InvoiceStatus[];
+  pageSize?: number;
+}) {
+  return pp<{ items?: Invoice[]; total_items?: number }>(
+    "POST",
+    `/v2/invoicing/search-invoices?page=1&page_size=${filter.pageSize ?? 100}&total_required=true`,
+    {
+      recipient_email: filter.recipientEmail,
+      status: filter.status,
+    },
   );
 }
 

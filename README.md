@@ -1,36 +1,110 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Owed: the AI agent that gets freelancers paid
 
-## Getting Started
+**Tell Owed who to bill. It sends real PayPal invoices, notices who's late, follows up in the right tone and sets up payment plans when a client needs one.**
 
-First, run the development server:
+Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com/).
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- 🎥 **Demo video:** _add YouTube link_
+- 🌐 **Live demo:** _add Render URL_ (runs against the PayPal sandbox)
+
+---
+
+## The problem
+
+Freelancers and small studios do the work, then spend hours being their own collections department: writing invoices, checking who paid, working up the nerve to send the third "just following up" email. Late payments are among the most common complaints of independent workers, and every day an invoice sits unpaid is cash flow they don't have.
+
+Invoicing tools already exist. What's missing is someone who does the *chasing*: knows which client always pays late, words the reminder so the relationship survives, and says "sure, three installments" when a client is struggling.
+
+## What Owed does
+
+You talk to Owed like you'd talk to a sharp bookkeeper, by typing or by voice:
+
+| You say | Owed does in PayPal |
+|---|---|
+| "Bill Acme Studio $1,200 for the logo and $300 for the brand guide, due in 14 days" | Saves the client, creates a two-line PayPal invoice, sends it, and shows the pay link |
+| "Who owes me money right now?" | Pulls every open invoice, works out what's overdue, totals what you're owed |
+| "Chase anyone who's late" | Checks each client's payment history, then sends PayPal reminders: friendly for good payers, firm for repeat late payers |
+| "Acme wants to pay in 3 monthly parts. That's fine, set it up" | Cancels the original invoice and sends three installment invoices with staggered due dates |
+| "Acme paid $500 by bank transfer" | Records the offline payment against the invoice |
+
+Every action appears live in the chat (each PayPal step with a check mark) and in the **What Owed has done** activity feed.
+
+## How it uses PayPal
+
+PayPal is the system of record. Owed never keeps its own copy of invoice state; it reads and writes PayPal directly:
+
+| PayPal API | Used for |
+|---|---|
+| `POST /v1/oauth2/token` | Client-credentials auth (cached) |
+| `POST /v2/invoicing/generate-next-invoice-number` | Sequential invoice numbers |
+| `POST /v2/invoicing/invoices` | Create draft invoices (line items, due dates, partial payments) |
+| `POST /v2/invoicing/invoices/{id}/send` | Email the invoice and pay link to the client |
+| `GET /v2/invoicing/invoices`, `POST /v2/invoicing/search-invoices` | Live status, per-client history, cash-flow totals |
+| `POST /v2/invoicing/invoices/{id}/remind` | Payment reminders with AI-written subject and message |
+| `POST /v2/invoicing/invoices/{id}/cancel` | Cancelling, and replacing an invoice with a payment plan |
+| `POST /v2/invoicing/invoices/{id}/payments` | Recording bank transfer, cash or check payments |
+
+## How it uses AI
+
+An OpenAI model (`gpt-5.5` by default) runs an agent loop with **11 tools** that wrap the PayPal APIs above:
+
+`save_client` · `find_client` · `create_and_send_invoice` · `list_invoices` · `get_invoice` · `send_reminder` · `create_payment_plan` · `record_offline_payment` · `cancel_invoice` · `client_payment_history` · `cashflow_summary`
+
+The agent decides which tools to call and in what order. For "send Acme a reminder" it looks up the client, finds the open invoice, reviews Acme's payment history and only then picks a tone and writes the message. Guardrails in the system prompt and the code:
+
+- It never invents an email, amount or invoice ID; it looks them up or asks.
+- Cancelling and payment plans happen only when the user clearly agrees.
+- Every tool input is validated against a Zod schema before anything touches PayPal, and PayPal errors go back to the model so it can correct itself.
+
+## Architecture
+
+```
+Browser (Next.js + React)
+  │  chat, voice input, live tool steps, invoice cards, activity feed
+  ▼
+POST /api/agent ── streams NDJSON events (tool_start / tool_done / text)
+  │
+  ├── Agent loop (OpenAI chat completions + function calling)
+  │     └── 11 tools (Zod-validated) ──► PayPal REST APIs (sandbox)
+  │
+  └── SQLite: client book, notes, payment plans, activity log, conversations
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- `src/lib/paypal.ts`: typed PayPal REST client
+- `src/lib/agent/tools.ts`: the 11 tools
+- `src/lib/agent/agent.ts`: system prompt and agent loop
+- `src/components/Chat.tsx`: the UI
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Run it yourself
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Needs:** Node 22+, a PayPal developer account (free) and an OpenAI API key.
 
-## Learn More
+1. **PayPal sandbox app:** at [developer.paypal.com](https://developer.paypal.com/), go to **Apps & Credentials → Sandbox → Create App** and copy the Client ID and Secret.
+2. **Sandbox client:** under **Testing Tools → Sandbox Accounts**, copy the email of the **Personal** account. It plays the client who receives and pays invoices.
+3. **Configure and run:**
 
-To learn more about Next.js, take a look at the following resources:
+   ```bash
+   git clone <this repo> && cd owed
+   npm install
+   cp .env.example .env.local   # fill in the values from steps 1–2 and your OPENAI_API_KEY
+   npm run smoke:paypal         # optional: proves PayPal works (creates and sends one invoice)
+   npm run dev
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+4. Open http://localhost:3000 and try: *"Bill Acme Studio (your-sandbox-personal-email) $1,200 for a logo, due in 14 days"*.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**To pay an invoice as the client:** open the "Client pay page" link on an invoice card and log in with the sandbox Personal account. After that, *"Who owes me money?"* shows it as paid.
 
-## Deploy on Vercel
+### Testing the hosted demo
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The live demo runs on the PayPal sandbox, so no real money moves. It allows a limited number of agent requests per hour per visitor.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+_Sandbox client login for paying invoices: add the sandbox Personal account email and password here before submitting._
+
+## Built with
+
+Next.js 16 · React 19 · TypeScript · Tailwind CSS · OpenAI API · PayPal Invoicing API v2 · SQLite (better-sqlite3) · Zod · Render
+
+## License
+
+[MIT](LICENSE)

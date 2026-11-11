@@ -1,0 +1,27 @@
+# Render Blueprint: Dashboard → New → Blueprint → pick this repo.
+# Secrets marked sync: false are entered in the Render dashboard, never committed.
+services:
+  - type: web
+    name: owed
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/activity
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: OWED_BUSINESS_NAME
+        value: Owed Demo Studio
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: SANDBOX_CLIENT_EMAIL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.5

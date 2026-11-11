@@ -11,7 +11,27 @@ const Body = z.object({
   message: z.string().min(1).max(4000),
 });
 
+// Simple in-memory limit so a public demo URL can't run up the OpenAI bill.
+const LIMIT = Number(process.env.OWED_RATE_LIMIT_PER_HOUR || 40);
+const hits = new Map<string, number[]>();
+
+function rateLimited(req: Request) {
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "local";
+  const now = Date.now();
+  const recent = (hits.get(ip) ?? []).filter((t) => now - t < 3_600_000);
+  if (recent.length >= LIMIT) return true;
+  recent.push(now);
+  hits.set(ip, recent);
+  return false;
+}
+
 export async function POST(req: Request) {
+  if (rateLimited(req)) {
+    return Response.json(
+      { error: "This demo allows a limited number of requests per hour. Please try again a bit later." },
+      { status: 429 },
+    );
+  }
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "Invalid request" }, { status: 400 });
   const { conversationId, message } = parsed.data;

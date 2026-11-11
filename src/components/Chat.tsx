@@ -109,7 +109,10 @@ export default function Chat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conversationId, message }),
       });
-      if (!res.ok || !res.body) throw new Error(`Request failed (${res.status})`);
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? `Request failed (${res.status})`);
+      }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";

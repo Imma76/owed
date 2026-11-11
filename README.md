@@ -5,7 +5,7 @@
 Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com/).
 
 - 🎥 **Demo video:** _add YouTube link_
-- 🌐 **Live demo:** _add Render URL_ (runs against the PayPal sandbox)
+- 🌐 **Live demo:** https://owed-rk4d.onrender.com (runs against the PayPal sandbox; first load can take ~1 minute while the free server wakes up)
 
 ---
 

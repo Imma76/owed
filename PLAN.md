@@ -11,7 +11,7 @@ chases late clients in the right tone, offers payment plans when a client asks, 
 ## Mapped to the judging criteria (all weighted equally)
 | Criterion | How Owed scores |
 |---|---|
-| Technological implementation | Claude agent with 8+ real PayPal tools (Invoicing v2, reminders, payments, refunds, Orders for payment plans, webhooks) |
+| Technological implementation | AI agent with 11 real PayPal tools (Invoicing v2, reminders, payments, refunds, Orders for payment plans, webhooks) |
 | Design | One coherent product: chat + live ledger + client view, not a proof of concept |
 | Potential impact | Specific audience (freelancers/contractors), specific pain (late payments), measurable outcome (days-to-paid) |
 | Innovation | Agent negotiates payment plans and picks reminder tone from each client's payment history |
@@ -24,7 +24,7 @@ chases late clients in the right tone, offers payment plans when a client asks, 
 
 ## Stack
 - Next.js (App Router) + TypeScript + Tailwind
-- Claude Opus 5.5 via `@anthropic-ai/sdk` tool runner (`betaZodTool`)
+- OpenAI model via the `openai` SDK (chat completions + function calling), tools defined with Zod
 - PayPal REST APIs called directly (sandbox): OAuth, Invoicing v2, Orders v2, Webhooks
 - SQLite (better-sqlite3) for clients, invoice metadata, agent activity log
 - AG Grid (React) for the ledger
@@ -51,5 +51,5 @@ chases late clients in the right tone, offers payment plans when a client asks, 
 1. Join the hackathon on Devpost (paypalaihackathon.devpost.com → Join Hackathon).
 2. Create a PayPal developer account at developer.paypal.com, create a sandbox REST app, and put its
    Client ID + Secret in `owed/.env.local` (template in `.env.example`).
-3. Have an Anthropic API key (or `ant auth login`) for the agent.
+3. Have an OpenAI API key for the agent.
 4. A public GitHub repo for the submission (we'll push when ready).

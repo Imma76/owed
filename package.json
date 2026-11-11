@@ -7,14 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "smoke:paypal": "node --env-file=.env.local --experimental-strip-types scripts/smoke-paypal.ts"
+    "smoke:paypal": "node --env-file=.env.local --experimental-strip-types scripts/smoke-paypal.ts",
+    "try-agent": "node --env-file=.env.local --experimental-strip-types --no-warnings scripts/try-agent.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.6.0",
     "ag-grid-community": "^36.3.0",
     "ag-grid-react": "^36.3.0",
     "better-sqlite3": "^13.0.3",
     "next": "16.4.5",
+    "openai": "^7.55.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "^4.6.7"

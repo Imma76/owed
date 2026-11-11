@@ -1,6 +1,6 @@
 // POST { conversationId, message } → streams newline-delimited JSON AgentEvents.
 import { z } from "zod";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { runAgentTurn } from "@/lib/agent/agent";
 import type { AgentEvent } from "@/lib/agent/tools";
 
@@ -25,11 +25,13 @@ export async function POST(req: Request) {
         emit({ type: "done" });
       } catch (err) {
         let error = "Something went wrong talking to the agent.";
-        if (err instanceof Anthropic.AuthenticationError) error = "Anthropic API key is missing or invalid (check .env.local).";
-        else if (err instanceof Anthropic.RateLimitError) error = "Rate limited by the Anthropic API. Wait a moment and try again.";
-        else if (err instanceof Anthropic.BadRequestError && /credit balance/i.test(err.message))
-          error = "The Anthropic account behind ANTHROPIC_API_KEY is out of credits. Add credits in the Claude Console (Plans & Billing), then try again.";
-        else if (err instanceof Anthropic.APIError) error = `Anthropic API error ${err.status}: ${err.message}`;
+        if (err instanceof OpenAI.AuthenticationError) error = "OpenAI API key is missing or invalid (check OPENAI_API_KEY in .env.local).";
+        else if (err instanceof OpenAI.RateLimitError)
+          error = /quota/i.test(err.message)
+            ? "The OpenAI account behind OPENAI_API_KEY has no quota left. Add billing credit at platform.openai.com, then try again."
+            : "Rate limited by the OpenAI API. Wait a moment and try again.";
+        else if (err instanceof OpenAI.NotFoundError) error = `Model not available to this key: ${err.message}`;
+        else if (err instanceof OpenAI.APIError) error = `OpenAI API error ${err.status}: ${err.message}`;
         else if (err instanceof Error) error = err.message;
         console.error("[agent]", err);
         emit({ type: "error", error });

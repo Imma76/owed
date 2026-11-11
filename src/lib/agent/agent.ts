@@ -1,13 +1,18 @@
-// Runs one user turn through Claude with Owed's PayPal tools and saves the
-// conversation (append-only, so thinking blocks stay valid across turns).
-import Anthropic from "@anthropic-ai/sdk";
-import type { BetaMessageParam } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+// Runs one user turn through the OpenAI model with Owed's PayPal tools and
+// saves the conversation so the agent remembers context across turns.
+import OpenAI from "openai";
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionMessageFunctionToolCall,
+} from "openai/resources/chat/completions/completions";
 import { buildTools, type AgentEvent } from "./tools";
+import { toOpenAITool, type AgentTool } from "./define-tool";
 import { loadConversation, saveConversation } from "../db";
 
-const client = new Anthropic();
+const client = new OpenAI();
 
-export const MODEL = "claude-opus-5-5";
+export const MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
+const MAX_STEPS = 15;
 
 const SYSTEM = `You are Owed, an AI accounts-receivable assistant for freelancers and small studios. You act on the user's real PayPal account (sandbox in this demo) through your tools: you create and send invoices, check what has been paid, chase late payers, set up payment plans and explain the user's cash flow.
 
@@ -23,53 +28,76 @@ How you work:
 How you reply:
 - Short and concrete, like a sharp human bookkeeper. Lead with what you did, then the numbers that matter (invoice number, client, amount, due date, status). Use a compact list for more than two invoices.
 - Money as "$1,200.00" style with the currency when it isn't USD. Dates as "Nov 22".
-- No headings, no filler, no sign-offs.`;
+- Plain text only: no markdown headings, bold or tables, no filler, no sign-offs.`;
 
-export async function runAgentTurn(
-  conversationId: string,
-  userText: string,
-  emit: (e: AgentEvent) => void,
-) {
-  const history = loadConversation(conversationId) as BetaMessageParam[];
+async function runTool(tools: Map<string, AgentTool>, call: ChatCompletionMessageFunctionToolCall): Promise<string> {
+  const tool = tools.get(call.function.name);
+  if (!tool) return JSON.stringify({ error: `Unknown tool ${call.function.name}` });
+  let raw: unknown;
+  try {
+    raw = JSON.parse(call.function.arguments || "{}");
+  } catch {
+    return JSON.stringify({ error: "Arguments were not valid JSON. Call the tool again with valid JSON." });
+  }
+  const parsed = tool.inputSchema.safeParse(raw);
+  if (!parsed.success) {
+    return JSON.stringify({ error: "Invalid arguments", issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
+  }
+  try {
+    return await tool.run(parsed.data);
+  } catch (err) {
+    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function runAgentTurn(conversationId: string, userText: string, emit: (e: AgentEvent) => void) {
+  const toolList = buildTools(emit) as AgentTool[];
+  const tools = new Map(toolList.map((t) => [t.name, t]));
+  const declarations = toolList.map(toOpenAITool);
+
+  const history = loadConversation(conversationId) as ChatCompletionMessageParam[];
   const today = new Date().toISOString().slice(0, 10);
-  const userMessage: BetaMessageParam = {
-    role: "user",
-    content: `[Today is ${today}]\n${userText}`,
-  };
+  const messages: ChatCompletionMessageParam[] = [
+    ...history,
+    { role: "user", content: `[Today is ${today}]\n${userText}` },
+  ];
 
-  const runner = client.beta.messages.toolRunner({
-    model: MODEL,
-    max_tokens: 16000,
-    max_iterations: 15,
-    system: SYSTEM,
-    tools: buildTools(emit),
-    messages: [...history, userMessage],
-    output_config: { effort: "medium" },
-    // Route a declined request to a suitable fallback model instead of failing the turn.
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-  });
+  try {
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const completion = await client.chat.completions.create({
+        model: MODEL,
+        messages: [{ role: "system", content: SYSTEM }, ...messages],
+        tools: declarations,
+        tool_choice: "auto",
+      });
+      const choice = completion.choices[0];
+      const msg = choice.message;
 
-  let final: Anthropic.Beta.Messages.BetaMessage | undefined;
-  for await (const message of runner) {
-    final = message;
-    for (const block of message.content) {
-      if (block.type === "text" && block.text.trim()) emit({ type: "text", text: block.text });
+      const calls = (msg.tool_calls ?? []).filter(
+        (c): c is ChatCompletionMessageFunctionToolCall => c.type === "function",
+      );
+      messages.push({
+        role: "assistant",
+        content: msg.content ?? null,
+        ...(calls.length ? { tool_calls: calls } : {}),
+      });
+      if (msg.content?.trim()) emit({ type: "text", text: msg.content });
+
+      if (!calls.length) {
+        if (choice.finish_reason === "length") emit({ type: "text", text: "That ran long and got cut off. Ask me to continue." });
+        if (msg.refusal) emit({ type: "text", text: msg.refusal });
+        return;
+      }
+
+      // Run this step's tool calls in parallel; every call gets a result message.
+      const results = await Promise.all(calls.map((c) => runTool(tools, c)));
+      calls.forEach((c, i) => messages.push({ role: "tool", tool_call_id: c.id, content: results[i] }));
     }
+    emit({ type: "text", text: "I hit my step limit for one request. Tell me what to do next." });
+  } finally {
+    // Save only complete exchanges: drop a trailing assistant tool call with no results.
+    const last = messages[messages.length - 1];
+    if (last?.role === "assistant" && "tool_calls" in last && last.tool_calls?.length) messages.pop();
+    saveConversation(conversationId, messages);
   }
-  if (!final) throw new Error("The agent returned no response");
-
-  if (final.stop_reason === "refusal") {
-    emit({ type: "text", text: "I can't help with that one. Try rephrasing what you need done with your invoices." });
-  } else if (final.stop_reason === "max_tokens") {
-    emit({ type: "text", text: "That ran long and got cut off. Ask me to continue." });
-  }
-
-  // Persist the full exchange, including tool calls, results and thinking blocks.
-  const messages = [...runner.params.messages] as BetaMessageParam[];
-  const last = messages[messages.length - 1];
-  if (!(last?.role === "assistant" && last.content === final.content)) {
-    messages.push({ role: "assistant", content: final.content });
-  }
-  saveConversation(conversationId, messages);
 }

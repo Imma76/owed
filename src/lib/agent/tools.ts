@@ -1,8 +1,7 @@
-// The tools Claude uses to act on PayPal. Each tool reports what it did
+// The tools the agent uses to act on PayPal. Each tool reports what it did
 // through `emit`, so the UI can show the agent working in real time,
 // and writes a line to the activity log.
-import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { ToolError } from "@anthropic-ai/sdk/lib/tools/ToolError";
+import { defineTool } from "./define-tool";
 import { z } from "zod";
 import * as paypal from "../paypal";
 import { toView, isOpen, daysBetween, type InvoiceView } from "../invoice-view";
@@ -23,7 +22,7 @@ const isoDate = (daysFromNow: number) =>
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
 
-/** Wrap a tool body so every call is visible in the UI and errors come back to Claude as tool errors. */
+/** Wrap a tool body so every call is visible in the UI and errors come back to the model as tool errors. */
 function track<T>(emit: Emit, tool: string, label: string, body: () => Promise<{ result: T; invoice?: InvoiceView; log?: [string, string, string?] }>) {
   return (async () => {
     emit({ type: "tool_start", tool, label });
@@ -35,14 +34,14 @@ function track<T>(emit: Emit, tool: string, label: string, body: () => Promise<{
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       emit({ type: "tool_error", tool, label, error: message });
-      // ToolError makes the runner return an is_error tool_result, so Claude can recover.
-      throw new ToolError(message);
+      // The agent loop turns this into an error result the model can read and recover from.
+      throw new Error(message);
     }
   })();
 }
 
 export function buildTools(emit: Emit) {
-  const saveClient = betaZodTool({
+  const saveClient = defineTool({
     name: "save_client",
     description:
       "Add or update a client in the user's client book. Use when the user mentions a new client with an email, or gives you notes about a client (e.g. 'always pays late', 'prefers formal tone').",
@@ -58,7 +57,7 @@ export function buildTools(emit: Emit) {
       })),
   });
 
-  const findClient = betaZodTool({
+  const findClient = defineTool({
     name: "find_client",
     description:
       "Look up clients in the client book by name or email fragment. Use before invoicing someone by name so you have their email.",
@@ -67,7 +66,7 @@ export function buildTools(emit: Emit) {
       track(emit, "find_client", `Looking up "${i.query}"`, async () => ({ result: findClients(i.query) })),
   });
 
-  const createAndSendInvoice = betaZodTool({
+  const createAndSendInvoice = defineTool({
     name: "create_and_send_invoice",
     description:
       "Create a real PayPal invoice and email it to the client. Returns the invoice with its PayPal ID and pay link. Only call this once you know the client's email, at least one line item with a price, and the due date.",
@@ -116,7 +115,7 @@ export function buildTools(emit: Emit) {
       }),
   });
 
-  const listInvoices = betaZodTool({
+  const listInvoices = defineTool({
     name: "list_invoices",
     description:
       "List the user's PayPal invoices, newest first, with status, amount due and days overdue. Optionally filter by client email or by open/paid.",
@@ -137,7 +136,7 @@ export function buildTools(emit: Emit) {
       }),
   });
 
-  const getInvoice = betaZodTool({
+  const getInvoice = defineTool({
     name: "get_invoice",
     description: "Get the live status of one invoice from PayPal by its PayPal invoice ID (e.g. INV2-XXXX-...).",
     inputSchema: z.object({ invoice_id: z.string() }),
@@ -148,7 +147,7 @@ export function buildTools(emit: Emit) {
       }),
   });
 
-  const sendReminder = betaZodTool({
+  const sendReminder = defineTool({
     name: "send_reminder",
     description:
       "Send a payment reminder for an unpaid invoice through PayPal. You write the subject and message. Pick the tone from how late the invoice is and the client's history: 'friendly' for first nudges, 'firm' when well overdue or repeatedly late, 'final' only when the user asks to escalate.",
@@ -170,7 +169,7 @@ export function buildTools(emit: Emit) {
       }),
   });
 
-  const createPaymentPlan = betaZodTool({
+  const createPaymentPlan = defineTool({
     name: "create_payment_plan",
     description:
       "Split an unpaid invoice into installments: cancels the original PayPal invoice and sends one new invoice per installment with staggered due dates. Use when a client asks to pay over time and the user agrees (or has told you payment plans are fine).",
@@ -221,7 +220,7 @@ export function buildTools(emit: Emit) {
       }),
   });
 
-  const recordOfflinePayment = betaZodTool({
+  const recordOfflinePayment = defineTool({
     name: "record_offline_payment",
     description:
       "Mark money received outside PayPal (bank transfer, cash, check) against an invoice, fully or partly. Only when the user says they received it.",
@@ -244,7 +243,7 @@ export function buildTools(emit: Emit) {
       }),
   });
 
-  const cancelInvoice = betaZodTool({
+  const cancelInvoice = defineTool({
     name: "cancel_invoice",
     description: "Cancel an unpaid invoice in PayPal and notify the client. Only when the user explicitly asks.",
     inputSchema: z.object({ invoice_id: z.string(), reason: z.string().max(500) }),
@@ -256,7 +255,7 @@ export function buildTools(emit: Emit) {
       }),
   });
 
-  const clientPaymentHistory = betaZodTool({
+  const clientPaymentHistory = defineTool({
     name: "client_payment_history",
     description:
       "Summarise how a client has paid in the past: invoices sent, paid, average days late, currently overdue. Use before choosing reminder tone or deciding whether to offer a payment plan.",
@@ -280,7 +279,7 @@ export function buildTools(emit: Emit) {
       }),
   });
 
-  const cashflowSummary = betaZodTool({
+  const cashflowSummary = defineTool({
     name: "cashflow_summary",
     description:
       "Overall picture of money owed to the user: total outstanding, total overdue, expected in the next 7 and 30 days, and the worst offenders.",
